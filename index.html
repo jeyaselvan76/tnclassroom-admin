@@ -1,1 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TNSED Admin | Results Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .feedback-cell { word-break: break-word; min-width: 250px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e3a8a; border-radius: 10px; }
+    </style>
+</head>
+<body class="bg-slate-50 font-sans antialiased flex flex-col min-h-screen">
 
+    <!-- TOP ADMIN HEADER PANEL -->
+    <div class="bg-[#1e3a8a] text-white p-6 shadow-lg sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+            <div>
+                <h1 class="text-2xl font-black tracking-tighter uppercase flex items-center gap-2">
+                    <i class="fa-solid fa-gauge-high text-cyan-300"></i> Admin Results Console
+                </h1>
+                <p id="date-range-label" class="text-[10px] font-bold text-cyan-300 uppercase tracking-widest mt-1">Loading database...</p>
+            </div>
+            <div class="flex gap-3">
+                <button onclick="downloadExcel()" class="bg-green-500 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-green-600 transition shadow flex items-center gap-2 text-xs uppercase tracking-wider">
+                    <i class="fa-solid fa-file-excel"></i> Export Excel
+                </button>
+                <button onclick="resetAndFetch()" class="bg-cyan-400 text-[#1e3a8a] px-6 py-2.5 rounded-xl font-black hover:bg-white transition shadow text-xs uppercase tracking-wider">
+                    <i class="fa-solid fa-rotate"></i> Refresh
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN CONTROL CENTER -->
+    <main class="flex-grow max-w-7xl w-full mx-auto p-6 space-y-6">
+        
+        <!-- AUDIENCE SELECTION SWITCHER -->
+        <div class="flex bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200/60 gap-2">
+            <button onclick="switchAdminTab('tntet')" id="tab-tntet" class="flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-[#1e3a8a] text-white">
+                <i class="fa-solid fa-user-tie mr-1.5"></i> TNTET Submissions
+            </button>
+            <button onclick="switchAdminTab('nmms')" id="tab-nmms" class="flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100">
+                <i class="fa-solid fa-children mr-1.5"></i> NMMS Submissions
+            </button>
+        </div>
+
+        <!-- SEARCH SEARCH AND FILTERS TOOLBAR -->
+        <div class="bg-white p-4 rounded-2xl shadow-sm grid grid-cols-1 md:grid-cols-3 gap-4 border border-slate-100">
+            <div>
+                <label class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Filter by Quiz ID</label>
+                <input type="text" id="filterQuiz" oninput="applyFilters()" placeholder="Search Quiz ID..." class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-medium text-sm">
+            </div>
+            <div>
+                <label class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Filter by District</label>
+                <input type="text" id="filterDist" oninput="applyFilters()" placeholder="Search District..." class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-medium text-sm">
+            </div>
+            <div>
+                <label class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Search Student / Mobile</label>
+                <input type="text" id="filterName" oninput="applyFilters()" placeholder="Search Name or Phone..." class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-medium text-sm">
+            </div>
+        </div>
+
+        <!-- SYSTEM MASTER DATA TABLE -->
+        <div class="bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
+            <div class="overflow-x-auto custom-scrollbar">
+                <table id="resultsTable" class="w-full text-left border-collapse">
+                    <thead class="bg-slate-50 border-b border-slate-200">
+                        <tr>
+                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Timestamp</th>
+                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Student Name</th>
+                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Mobile</th>
+                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">District</th>
+                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Quiz ID</th>
+                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider text-center">Score</th>
+                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Feedback</th>
+                        </tr>
+                    </thead>
+                    <tbody id="resultsTableBody" class="divide-y divide-slate-100"></tbody>
+                </table>
+            </div>
+            
+            <!-- WINDOWING TIMELINE CHUNK LOADER -->
+            <div class="p-6 bg-slate-50 border-t border-slate-100 flex flex-col items-center gap-3">
+                <div id="loadingState" class="text-slate-400 font-bold text-xs uppercase tracking-wider hidden">
+                    <i class="fa-solid fa-circle-notch fa-spin text-blue-600 mr-1.5"></i>Syncing Cloud Data...
+                </div>
+                <button id="loadMoreBtn" onclick="fetchNextTwoDays()" class="bg-white border-2 border-[#1e3a8a] text-[#1e3a8a] px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-[#1e3a8a] hover:text-white transition-all shadow-sm">
+                    Load Previous 2 Days
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <!-- MODULE INITS -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, getDocs, query, orderBy, where, Timestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBW92t7GWAf6vIHdJ83n7Nz7Io3y2GArVw",
+            authDomain: "tnclassroom-mcq-new.firebaseapp.com",
+            projectId: "tnclassroom-mcq-new",
+            storageBucket: "tnclassroom-mcq-new.firebasestorage.app",
+            messagingSenderId: "808928665241",
+            appId: "1:808928665241:web:5a8a9e3f4ee5b885c9a208",
+            measurementId: "G-L059C061EY"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        let adminExamScope = "tntet"; // active collection tracker: tntet / nmms
+        let allResults = []; 
+        let currentWindowEnd = new Date(); 
+        const WINDOW_SIZE_DAYS = 2;
+
+        window.switchAdminTab = (targetScope) => {
+            adminExamScope = targetScope;
+            
+            const tntetBtn = document.getElementById('tab-tntet');
+            const nmmsBtn = document.getElementById('tab-nmms');
+
+            if(targetScope === 'tntet') {
+                tntetBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-[#1e3a8a] text-white";
+                nmmsBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
+            } else {
+                nmmsBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-emerald-600 text-white";
+                tntetBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
+            }
+            resetAndFetch();
+        };
+
+        window.resetAndFetch = () => {
+            allResults = [];
+            document.getElementById('resultsTableBody').innerHTML = '';
+            currentWindowEnd = new Date();
+            fetchNextTwoDays();
+        };
+
+        window.fetchNextTwoDays = async () => {
+            const loader = document.getElementById('loadingState');
+            const btn = document.getElementById('loadMoreBtn');
+            const label = document.getElementById('date-range-label');
+
+            loader.classList.remove('hidden');
+            btn.disabled = true;
+            btn.classList.add('opacity-50');
+
+            const windowStart = new Date(currentWindowEnd);
+            windowStart.setDate(windowStart.getDate() - WINDOW_SIZE_DAYS);
+
+            label.innerText = `Workspace Scope [${adminExamScope.toUpperCase()}]: ${windowStart.toLocaleDateString()} to ${currentWindowEnd.toLocaleDateString()}`;
+
+            try {
+                const resultsRef = collection(db, "results");
+                const q = query(
+                    resultsRef,
+                    where("timestamp", ">=", Timestamp.fromDate(windowStart)),
+                    where("timestamp", "<", Timestamp.fromDate(currentWindowEnd)),
+                    orderBy("timestamp", "desc")
+                );
+
+                const querySnapshot = await getDocs(q);
+                let newData = querySnapshot.docs.map(doc => doc.data());
+
+                // Client-side classification splitting rule matching target tab selections
+                if (adminExamScope === 'tntet') {
+                    newData = newData.filter(item => (item.quizId || "").toLowerCase().includes('tet') || item.examType === 'tntet');
+                } else {
+                    newData = newData.filter(item => (item.quizId || "").toLowerCase().includes('nmms') || item.examType === 'nmms');
+                }
+
+                allResults = [...allResults, ...newData];
+                currentWindowEnd = windowStart;
+
+                applyFilters(); 
+            } catch (error) {
+                console.error(error);
+                alert("Firestore Stream Error. Verify security rules or database connection tracks.");
+            } finally {
+                loader.classList.add('hidden');
+                btn.disabled = false;
+                btn.classList.remove('opacity-50');
+            }
+        };
+
+        window.applyFilters = () => {
+            const qId = document.getElementById('filterQuiz').value.toLowerCase();
+            const distInput = document.getElementById('filterDist').value.toLowerCase();
+            const search = document.getElementById('filterName').value.toLowerCase();
+
+            const filteredData = allResults.filter(r => {
+                const districtValue = (r.district || r.dist || "").toLowerCase();
+                return (r.quizId || "").toLowerCase().includes(qId) &&
+                       districtValue.includes(distInput) &&
+                       ((r.name || "").toLowerCase().includes(search) || (r.mobile || "").includes(search));
+            });
+            renderTable(filteredData);
+        };
+
+        function renderTable(data) {
+            const body = document.getElementById('resultsTableBody');
+            body.innerHTML = '';
+
+            data.forEach(item => {
+                const date = item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : "—";
+                const displayDistrict = item.district || item.dist || "—";
+                const badgeStyle = adminExamScope === 'nmms' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-700';
+                
+                const row = `
+                    <tr class="hover:bg-slate-50 transition">
+                        <td class="p-4 text-[10px] text-slate-400 font-mono font-bold whitespace-nowrap">${date}</td>
+                        <td class="p-4 font-bold text-slate-700">${item.name || '—'}</td>
+                        <td class="p-4 text-xs text-slate-600 font-mono font-medium">${item.mobile || '—'}</td>
+                        <td class="p-4 text-sm text-slate-600">${displayDistrict}</td>
+                        <td class="p-4">
+                            <span class="${badgeStyle} text-[10px] px-2 py-1 rounded-md font-black uppercase tracking-tight font-mono">${item.quizId || 'N/A'}</span>
+                        </td>
+                        <td class="p-4 text-center">
+                            <span class="font-black text-slate-800 text-base">${item.score ?? 0}</span>
+                            <span class="text-[10px] text-slate-400 font-bold">/${item.total || 0}</span>
+                        </td>
+                        <td class="p-4 text-xs text-slate-600 italic whitespace-normal feedback-cell">
+                            ${item.feedback || "—"}
+                        </td>
+                    </tr>
+                `;
+                body.insertAdjacentHTML('beforeend', row);
+            });
+        }
+
+        window.downloadExcel = () => {
+            if (allResults.length === 0) {
+                alert("No records loaded to export.");
+                return;
+            }
+            const cleanExportData = allResults.map(item => ({
+                Timestamp: item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : "",
+                Student_Name: item.name || "",
+                Mobile_Number: item.mobile || "",
+                District: item.district || item.dist || "",
+                Quiz_ID: item.quizId || "",
+                Score: item.score ?? 0,
+                Total: item.total || 0,
+                Feedback: item.feedback || ""
+            }));
+
+            const ws = XLSX.utils.json_to_sheet(cleanExportData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Admin_Report");
+            XLSX.writeFile(wb, `TNClassroom_Admin_${adminExamScope.toUpperCase()}_Export.xlsx`);
+        };
+
+        window.fetchNextTwoDays();
+    </script>
+</body>
+</html>
