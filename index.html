@@ -39,28 +39,31 @@
     <!-- MAIN CONTROL CENTER -->
     <main class="flex-grow max-w-7xl w-full mx-auto p-6 space-y-6">
         
-        <!-- AUDIENCE SELECTION SWITCHER -->
-        <div class="flex bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200/60 gap-2">
+        <!-- AUDIENCE SELECTION SWITCHER (MODIFIED: Appended third modular layout segment button) -->
+        <div class="flex flex-col sm:flex-row bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200/60 gap-2">
             <button onclick="switchAdminTab('tntet')" id="tab-tntet" class="flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-[#1e3a8a] text-white">
                 <i class="fa-solid fa-user-tie mr-1.5"></i> TNTET Submissions
             </button>
             <button onclick="switchAdminTab('nmms')" id="tab-nmms" class="flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100">
                 <i class="fa-solid fa-children mr-1.5"></i> NMMS Submissions
             </button>
+            <button onclick="switchAdminTab('feedback')" id="tab-feedback" class="flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100">
+                <i class="fa-solid fa-comments mr-1.5"></i> User Feedback Portal
+            </button>
         </div>
 
         <!-- SEARCH SEARCH AND FILTERS TOOLBAR -->
         <div class="bg-white p-4 rounded-2xl shadow-sm grid grid-cols-1 md:grid-cols-3 gap-4 border border-slate-100">
             <div>
-                <label class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Filter by Quiz ID</label>
+                <label id="filterQuizLabel" class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Filter by Quiz ID</label>
                 <input type="text" id="filterQuiz" oninput="applyFilters()" placeholder="Search Quiz ID..." class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-medium text-sm">
             </div>
             <div>
-                <label class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Filter by District</label>
+                <label id="filterDistLabel" class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Filter by District</label>
                 <input type="text" id="filterDist" oninput="applyFilters()" placeholder="Search District..." class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-medium text-sm">
             </div>
             <div>
-                <label class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Search Student / Mobile</label>
+                <label class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Search Name / Mobile</label>
                 <input type="text" id="filterName" oninput="applyFilters()" placeholder="Search Name or Phone..." class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-medium text-sm">
             </div>
         </div>
@@ -70,14 +73,8 @@
             <div class="overflow-x-auto custom-scrollbar">
                 <table id="resultsTable" class="w-full text-left border-collapse">
                     <thead class="bg-slate-50 border-b border-slate-200">
-                        <tr>
-                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Timestamp</th>
-                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Student Name</th>
-                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Mobile</th>
-                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">District</th>
-                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Quiz ID</th>
-                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider text-center">Score</th>
-                            <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Feedback</th>
+                        <tr id="tableHeaderRow">
+                            <!-- Populated Dynamically via Script Loop Blocks -->
                         </tr>
                     </thead>
                     <tbody id="resultsTableBody" class="divide-y divide-slate-100"></tbody>
@@ -114,7 +111,7 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        let adminExamScope = "tntet"; // active collection tracker: tntet / nmms
+        let adminExamScope = "tntet"; // active collection tracker: tntet / nmms / feedback
         let allResults = []; 
         let currentWindowEnd = new Date(); 
         const WINDOW_SIZE_DAYS = 2;
@@ -124,13 +121,41 @@
             
             const tntetBtn = document.getElementById('tab-tntet');
             const nmmsBtn = document.getElementById('tab-nmms');
+            const feedbackBtn = document.getElementById('tab-feedback');
+
+            const loadMoreBtn = document.getElementById('loadMoreBtn');
+            
+            // Normalize layout targets state classes
+            tntetBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
+            nmmsBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
+            feedbackBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
+
+            // Modify active field UI filter helper texts depending on tab mapping selection context
+            const filterQuizInput = document.getElementById('filterQuiz');
+            const filterDistInput = document.getElementById('filterDist');
+            const filterQuizLabel = document.getElementById('filterQuizLabel');
+            const filterDistLabel = document.getElementById('filterDistLabel');
+
+            filterQuizInput.disabled = false;
+            filterDistInput.disabled = false;
+            filterQuizInput.classList.remove('opacity-40');
+            filterDistInput.classList.remove('opacity-40');
+            filterQuizLabel.innerText = "Filter by Quiz ID";
+            filterDistLabel.innerText = "Filter by District";
 
             if(targetScope === 'tntet') {
                 tntetBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-[#1e3a8a] text-white";
-                nmmsBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
-            } else {
+                loadMoreBtn.className = "bg-white border-2 border-[#1e3a8a] text-[#1e3a8a] px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-[#1e3a8a] hover:text-white transition-all shadow-sm";
+            } else if(targetScope === 'nmms') {
                 nmmsBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-emerald-600 text-white";
-                tntetBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
+                loadMoreBtn.className = "bg-white border-2 border-emerald-600 text-emerald-600 px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-emerald-600 hover:text-white transition-all shadow-sm";
+            } else {
+                feedbackBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-purple-700 text-white";
+                loadMoreBtn.className = "bg-white border-2 border-purple-700 text-purple-700 px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-purple-700 hover:text-white transition-all shadow-sm";
+                
+                // Mute and adjust non-applicable data filter elements for feedback tab
+                filterQuizLabel.innerText = "Filter by Feedback ID";
+                filterDistLabel.innerText = "Filter by Email Address";
             }
             resetAndFetch();
         };
@@ -156,23 +181,30 @@
 
             label.innerText = `Workspace Scope [${adminExamScope.toUpperCase()}]: ${windowStart.toLocaleDateString()} to ${currentWindowEnd.toLocaleDateString()}`;
 
+            // MODIFIED: Targets 'feedback' or 'results' collection references transparently
+            const isFeedbackScope = adminExamScope === 'feedback';
+            const collectionTarget = isFeedbackScope ? "feedback" : "results";
+            const orderTimestampField = isFeedbackScope ? "submittedAt" : "timestamp";
+
             try {
-                const resultsRef = collection(db, "results");
+                const resultsRef = collection(db, collectionTarget);
                 const q = query(
                     resultsRef,
-                    where("timestamp", ">=", Timestamp.fromDate(windowStart)),
-                    where("timestamp", "<", Timestamp.fromDate(currentWindowEnd)),
-                    orderBy("timestamp", "desc")
+                    where(orderTimestampField, ">=", Timestamp.fromDate(windowStart)),
+                    where(orderTimestampField, "<", Timestamp.fromDate(currentWindowEnd)),
+                    orderBy(orderTimestampField, "desc")
                 );
 
                 const querySnapshot = await getDocs(q);
                 let newData = querySnapshot.docs.map(doc => doc.data());
 
-                // Client-side classification splitting rule matching target tab selections
-                if (adminExamScope === 'tntet') {
-                    newData = newData.filter(item => (item.quizId || "").toLowerCase().includes('tet') || item.examType === 'tntet');
-                } else {
-                    newData = newData.filter(item => (item.quizId || "").toLowerCase().includes('nmms') || item.examType === 'nmms');
+                if (!isFeedbackScope) {
+                    // Client-side classification splitting rule matching target tab selections for results
+                    if (adminExamScope === 'tntet') {
+                        newData = newData.filter(item => (item.quizId || "").toLowerCase().includes('tet') || item.examType === 'tntet');
+                    } else {
+                        newData = newData.filter(item => (item.quizId || "").toLowerCase().includes('nmms') || item.examType === 'nmms');
+                    }
                 }
 
                 allResults = [...allResults, ...newData];
@@ -194,44 +226,93 @@
             const distInput = document.getElementById('filterDist').value.toLowerCase();
             const search = document.getElementById('filterName').value.toLowerCase();
 
+            // MODIFIED: Adapts filter fields lookup keys when processing the feedback collection schema arrays
             const filteredData = allResults.filter(r => {
-                const districtValue = (r.district || r.dist || "").toLowerCase();
-                return (r.quizId || "").toLowerCase().includes(qId) &&
-                       districtValue.includes(distInput) &&
-                       ((r.name || "").toLowerCase().includes(search) || (r.mobile || "").includes(search));
+                if (adminExamScope === 'feedback') {
+                    return (r.feedbackId || "").toLowerCase().includes(qId) &&
+                           (r.emailAddress || "").toLowerCase().includes(distInput) &&
+                           ((r.name || "").toLowerCase().includes(search) || (r.mobileNumber || "").includes(search));
+                } else {
+                    const districtValue = (r.district || r.dist || "").toLowerCase();
+                    return (r.quizId || "").toLowerCase().includes(qId) &&
+                           districtValue.includes(distInput) &&
+                           ((r.name || "").toLowerCase().includes(search) || (r.mobile || "").includes(search));
+                }
             });
             renderTable(filteredData);
         };
 
         function renderTable(data) {
+            const headerRow = document.getElementById('tableHeaderRow');
             const body = document.getElementById('resultsTableBody');
             body.innerHTML = '';
 
-            data.forEach(item => {
-                const date = item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : "—";
-                const displayDistrict = item.district || item.dist || "—";
-                const badgeStyle = adminExamScope === 'nmms' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-700';
-                
-                const row = `
-                    <tr class="hover:bg-slate-50 transition">
-                        <td class="p-4 text-[10px] text-slate-400 font-mono font-bold whitespace-nowrap">${date}</td>
-                        <td class="p-4 font-bold text-slate-700">${item.name || '—'}</td>
-                        <td class="p-4 text-xs text-slate-600 font-mono font-medium">${item.mobile || '—'}</td>
-                        <td class="p-4 text-sm text-slate-600">${displayDistrict}</td>
-                        <td class="p-4">
-                            <span class="${badgeStyle} text-[10px] px-2 py-1 rounded-md font-black uppercase tracking-tight font-mono">${item.quizId || 'N/A'}</span>
-                        </td>
-                        <td class="p-4 text-center">
-                            <span class="font-black text-slate-800 text-base">${item.score ?? 0}</span>
-                            <span class="text-[10px] text-slate-400 font-bold">/${item.total || 0}</span>
-                        </td>
-                        <td class="p-4 text-xs text-slate-600 italic whitespace-normal feedback-cell">
-                            ${item.feedback || "—"}
-                        </td>
-                    </tr>
+            // MODIFIED: Dynamic DOM headers allocation injector
+            if (adminExamScope === 'feedback') {
+                headerRow.innerHTML = `
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Submitted At</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">User Name</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Mobile</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Email Address</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Feedback ID</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Message Content</th>
                 `;
-                body.insertAdjacentHTML('beforeend', row);
-            });
+
+                data.forEach(item => {
+                    const date = item.submittedAt?.toDate ? item.submittedAt.toDate().toLocaleString() : "—";
+                    const row = `
+                        <tr class="hover:bg-slate-50 transition">
+                            <td class="p-4 text-[10px] text-slate-400 font-mono font-bold whitespace-nowrap">${date}</td>
+                            <td class="p-4 font-bold text-slate-700">${item.name || '—'}</td>
+                            <td class="p-4 text-xs text-slate-600 font-mono font-medium">${item.mobileNumber || '—'}</td>
+                            <td class="p-4 text-sm text-slate-600">${item.emailAddress || '—'}</td>
+                            <td class="p-4">
+                                <span class="bg-purple-100 text-purple-700 text-[10px] px-2 py-1 rounded-md font-black uppercase tracking-tight font-mono">${item.feedbackId || 'N/A'}</span>
+                            </td>
+                            <td class="p-4 text-xs text-slate-600 italic whitespace-normal feedback-cell tamil-fix">
+                                ${item.messageContent || "—"}
+                            </td>
+                        </tr>
+                    `;
+                    body.insertAdjacentHTML('beforeend', row);
+                });
+            } else {
+                headerRow.innerHTML = `
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Timestamp</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Student Name</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Mobile</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">District</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Quiz ID</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider text-center">Score</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Feedback</th>
+                `;
+
+                data.forEach(item => {
+                    const date = item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : "—";
+                    const displayDistrict = item.district || item.dist || "—";
+                    const badgeStyle = adminExamScope === 'nmms' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-700';
+                    
+                    const row = `
+                        <tr class="hover:bg-slate-50 transition">
+                            <td class="p-4 text-[10px] text-slate-400 font-mono font-bold whitespace-nowrap">${date}</td>
+                            <td class="p-4 font-bold text-slate-700">${item.name || '—'}</td>
+                            <td class="p-4 text-xs text-slate-600 font-mono font-medium">${item.mobile || '—'}</td>
+                            <td class="p-4 text-sm text-slate-600">${displayDistrict}</td>
+                            <td class="p-4">
+                                <span class="${badgeStyle} text-[10px] px-2 py-1 rounded-md font-black uppercase tracking-tight font-mono">${item.quizId || 'N/A'}</span>
+                            </td>
+                            <td class="p-4 text-center">
+                                <span class="font-black text-slate-800 text-base">${item.score ?? 0}</span>
+                                <span class="text-[10px] text-slate-400 font-bold">/${item.total || 0}</span>
+                            </td>
+                            <td class="p-4 text-xs text-slate-600 italic whitespace-normal feedback-cell">
+                                ${item.feedback || "—"}
+                            </td>
+                        </tr>
+                    `;
+                    body.insertAdjacentHTML('beforeend', row);
+                });
+            }
         }
 
         window.downloadExcel = () => {
@@ -239,16 +320,31 @@
                 alert("No records loaded to export.");
                 return;
             }
-            const cleanExportData = allResults.map(item => ({
-                Timestamp: item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : "",
-                Student_Name: item.name || "",
-                Mobile_Number: item.mobile || "",
-                District: item.district || item.dist || "",
-                Quiz_ID: item.quizId || "",
-                Score: item.score ?? 0,
-                Total: item.total || 0,
-                Feedback: item.feedback || ""
-            }));
+
+            let cleanExportData = [];
+
+            // MODIFIED: Structurally re-aligns object mapping targets for Excel sheet conversion loops
+            if (adminExamScope === 'feedback') {
+                cleanExportData = allResults.map(item => ({
+                    Submitted_At: item.submittedAt?.toDate ? item.submittedAt.toDate().toLocaleString() : "",
+                    User_Name: item.name || "",
+                    Mobile_Number: item.mobileNumber || "",
+                    Email_Address: item.emailAddress || "",
+                    Feedback_ID: item.feedbackId || "",
+                    Message_Content: item.messageContent || ""
+                }));
+            } else {
+                cleanExportData = allResults.map(item => ({
+                    Timestamp: item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : "",
+                    Student_Name: item.name || "",
+                    Mobile_Number: item.mobile || "",
+                    District: item.district || item.dist || "",
+                    Quiz_ID: item.quizId || "",
+                    Score: item.score ?? 0,
+                    Total: item.total || 0,
+                    Feedback: item.feedback || ""
+                }));
+            }
 
             const ws = XLSX.utils.json_to_sheet(cleanExportData);
             const wb = XLSX.utils.book_new();
