@@ -39,7 +39,7 @@
     <!-- MAIN CONTROL CENTER -->
     <main class="flex-grow max-w-7xl w-full mx-auto p-6 space-y-6">
         
-        <!-- AUDIENCE SELECTION SWITCHER (MODIFIED: Appended third modular layout segment button) -->
+        <!-- AUDIENCE SELECTION SWITCHER -->
         <div class="flex flex-col sm:flex-row bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200/60 gap-2">
             <button onclick="switchAdminTab('tntet')" id="tab-tntet" class="flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-[#1e3a8a] text-white">
                 <i class="fa-solid fa-user-tie mr-1.5"></i> TNTET Submissions
@@ -52,7 +52,29 @@
             </button>
         </div>
 
-        <!-- SEARCH SEARCH AND FILTERS TOOLBAR -->
+        <!-- TODAY & YESTERDAY METRIC STAT CARDS -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+                <div>
+                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-wider">Today's Submissions</p>
+                    <h3 id="todayCount" class="text-2xl font-black text-slate-800 mt-0.5">0</h3>
+                </div>
+                <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-lg">
+                    <i class="fa-solid fa-calendar-day"></i>
+                </div>
+            </div>
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex items-center justify-between">
+                <div>
+                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-wider">Yesterday's Submissions</p>
+                    <h3 id="yesterdayCount" class="text-2xl font-black text-slate-800 mt-0.5">0</h3>
+                </div>
+                <div class="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center text-lg">
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- SEARCH AND FILTERS TOOLBAR -->
         <div class="bg-white p-4 rounded-2xl shadow-sm grid grid-cols-1 md:grid-cols-3 gap-4 border border-slate-100">
             <div>
                 <label id="filterQuizLabel" class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Filter by Quiz ID</label>
@@ -130,7 +152,6 @@
             nmmsBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
             feedbackBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
 
-            // Modify active field UI filter helper texts depending on tab mapping selection context
             const filterQuizInput = document.getElementById('filterQuiz');
             const filterDistInput = document.getElementById('filterDist');
             const filterQuizLabel = document.getElementById('filterQuizLabel');
@@ -153,7 +174,6 @@
                 feedbackBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-purple-700 text-white";
                 loadMoreBtn.className = "bg-white border-2 border-purple-700 text-purple-700 px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-purple-700 hover:text-white transition-all shadow-sm";
                 
-                // Mute and adjust non-applicable data filter elements for feedback tab
                 filterQuizLabel.innerText = "Filter by Feedback ID";
                 filterDistLabel.innerText = "Filter by Email Address";
             }
@@ -163,9 +183,41 @@
         window.resetAndFetch = () => {
             allResults = [];
             document.getElementById('resultsTableBody').innerHTML = '';
+            document.getElementById('todayCount').innerText = '0';
+            document.getElementById('yesterdayCount').innerText = '0';
             currentWindowEnd = new Date();
             fetchNextTwoDays();
         };
+
+        function updateDateMetrics(data) {
+            const now = new Date();
+
+            // Midnight today (00:00:00)
+            const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+            // Midnight yesterday (00:00:00)
+            const yesterdayStart = new Date(todayStart);
+            yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+
+            let todayCount = 0;
+            let yesterdayCount = 0;
+
+            data.forEach(item => {
+                const rawTs = adminExamScope === 'feedback' ? item.submittedAt : item.timestamp;
+                if (!rawTs) return;
+
+                const recordDate = rawTs.toDate ? rawTs.toDate() : new Date(rawTs);
+
+                if (recordDate >= todayStart) {
+                    todayCount++;
+                } else if (recordDate >= yesterdayStart && recordDate < todayStart) {
+                    yesterdayCount++;
+                }
+            });
+
+            document.getElementById('todayCount').innerText = todayCount.toLocaleString();
+            document.getElementById('yesterdayCount').innerText = yesterdayCount.toLocaleString();
+        }
 
         window.fetchNextTwoDays = async () => {
             const loader = document.getElementById('loadingState');
@@ -181,7 +233,6 @@
 
             label.innerText = `Workspace Scope [${adminExamScope.toUpperCase()}]: ${windowStart.toLocaleDateString()} to ${currentWindowEnd.toLocaleDateString()}`;
 
-            // MODIFIED: Targets 'feedback' or 'results' collection references transparently
             const isFeedbackScope = adminExamScope === 'feedback';
             const collectionTarget = isFeedbackScope ? "feedback" : "results";
             const orderTimestampField = isFeedbackScope ? "submittedAt" : "timestamp";
@@ -199,7 +250,6 @@
                 let newData = querySnapshot.docs.map(doc => doc.data());
 
                 if (!isFeedbackScope) {
-                    // Client-side classification splitting rule matching target tab selections for results
                     if (adminExamScope === 'tntet') {
                         newData = newData.filter(item => (item.quizId || "").toLowerCase().includes('tet') || item.examType === 'tntet');
                     } else {
@@ -210,6 +260,7 @@
                 allResults = [...allResults, ...newData];
                 currentWindowEnd = windowStart;
 
+                updateDateMetrics(allResults);
                 applyFilters(); 
             } catch (error) {
                 console.error(error);
@@ -226,7 +277,6 @@
             const distInput = document.getElementById('filterDist').value.toLowerCase();
             const search = document.getElementById('filterName').value.toLowerCase();
 
-            // MODIFIED: Adapts filter fields lookup keys when processing the feedback collection schema arrays
             const filteredData = allResults.filter(r => {
                 if (adminExamScope === 'feedback') {
                     return (r.feedbackId || "").toLowerCase().includes(qId) &&
@@ -247,7 +297,6 @@
             const body = document.getElementById('resultsTableBody');
             body.innerHTML = '';
 
-            // MODIFIED: Dynamic DOM headers allocation injector
             if (adminExamScope === 'feedback') {
                 headerRow.innerHTML = `
                     <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Submitted At</th>
@@ -269,7 +318,7 @@
                             <td class="p-4">
                                 <span class="bg-purple-100 text-purple-700 text-[10px] px-2 py-1 rounded-md font-black uppercase tracking-tight font-mono">${item.feedbackId || 'N/A'}</span>
                             </td>
-                            <td class="p-4 text-xs text-slate-600 italic whitespace-normal feedback-cell tamil-fix">
+                            <td class="p-4 text-xs text-slate-600 italic whitespace-normal feedback-cell">
                                 ${item.messageContent || "—"}
                             </td>
                         </tr>
@@ -323,36 +372,36 @@
 
             let cleanExportData = [];
 
-            // MODIFIED: Structurally re-aligns object mapping targets for Excel sheet conversion loops
             if (adminExamScope === 'feedback') {
                 cleanExportData = allResults.map(item => ({
-                    Submitted_At: item.submittedAt?.toDate ? item.submittedAt.toDate().toLocaleString() : "",
-                    User_Name: item.name || "",
-                    Mobile_Number: item.mobileNumber || "",
-                    Email_Address: item.emailAddress || "",
-                    Feedback_ID: item.feedbackId || "",
-                    Message_Content: item.messageContent || ""
+                    "Submitted At": item.submittedAt?.toDate ? item.submittedAt.toDate().toLocaleString() : "—",
+                    "User Name": item.name || "—",
+                    "Mobile": item.mobileNumber || "—",
+                    "Email Address": item.emailAddress || "—",
+                    "Feedback ID": item.feedbackId || "N/A",
+                    "Message Content": item.messageContent || "—"
                 }));
             } else {
                 cleanExportData = allResults.map(item => ({
-                    Timestamp: item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : "",
-                    Student_Name: item.name || "",
-                    Mobile_Number: item.mobile || "",
-                    District: item.district || item.dist || "",
-                    Quiz_ID: item.quizId || "",
-                    Score: item.score ?? 0,
-                    Total: item.total || 0,
-                    Feedback: item.feedback || ""
+                    "Timestamp": item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : "—",
+                    "Student Name": item.name || "—",
+                    "Mobile": item.mobile || "—",
+                    "District": item.district || item.dist || "—",
+                    "Quiz ID": item.quizId || "N/A",
+                    "Score": item.score ?? 0,
+                    "Total": item.total || 0,
+                    "Feedback": item.feedback || "—"
                 }));
             }
 
             const ws = XLSX.utils.json_to_sheet(cleanExportData);
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Admin_Report");
-            XLSX.writeFile(wb, `TNClassroom_Admin_${adminExamScope.toUpperCase()}_Export.xlsx`);
+            XLSX.utils.book_append_sheet(wb, ws, `${adminExamScope.toUpperCase()}_Export`);
+            XLSX.writeFile(wb, `${adminExamScope}_results_${new Date().toISOString().slice(0, 10)}.xlsx`);
         };
 
-        window.fetchNextTwoDays();
+        // Initial fetch on load
+        window.resetAndFetch();
     </script>
 </body>
 </html>
