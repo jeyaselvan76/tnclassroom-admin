@@ -23,7 +23,7 @@
                     <i class="fa-solid fa-shield-halved"></i> Multi-Admin Portal
                 </div>
                 <h1 class="text-2xl font-black text-slate-900 tracking-tight">TNTET Student &amp; Subscription Desk</h1>
-                <p class="text-xs text-slate-500 mt-0.5">Manage candidates, separate Free vs PRO users, and export WhatsApp contacts for groups.</p>
+                <p class="text-xs text-slate-500 mt-0.5">Manage candidates, verify against G-Form responses, and activate PRO accounts.</p>
             </div>
 
             <!-- Admin Authentication Display -->
@@ -74,9 +74,9 @@
                     <span class="text-[10px] font-black uppercase tracking-wider text-emerald-600">PRO Members (₹995)</span>
                     <p id="stat-pro" class="text-2xl font-black text-emerald-600 mt-1">0</p>
                 </div>
-                <div class="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm">
-                    <span class="text-[10px] font-black uppercase tracking-wider text-purple-600">Total Revenue</span>
-                    <p id="stat-revenue" class="text-2xl font-black text-purple-700 mt-1">₹0</p>
+                <div class="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm border-l-4 border-l-indigo-500">
+                    <span class="text-[10px] font-black uppercase tracking-wider text-indigo-600">G-Form Matches</span>
+                    <p id="stat-matches" class="text-2xl font-black text-indigo-700 mt-1">0</p>
                 </div>
             </div>
 
@@ -89,17 +89,18 @@
 
                 <div class="flex flex-wrap items-center gap-2.5 w-full lg:w-auto justify-end">
                     <div class="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs">
-                        <span class="text-slate-400 font-bold text-[10px] uppercase">Show:</span>
+                        <span class="text-slate-400 font-bold text-[10px] uppercase">Plan:</span>
                         <select id="filter-plan" onchange="applyFilters()" class="bg-transparent font-bold text-slate-800 outline-none">
                             <option value="ALL" selected>All Candidates</option>
                             <option value="PRO">PRO Members Only</option>
                             <option value="FREE">Free / Pending Only</option>
+                            <option value="MATCH">Form Match Only</option>
                         </select>
                     </div>
 
                     <button onclick="copyAllVisibleWhatsApp()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-sm cursor-pointer">
                         <i class="fa-brands fa-whatsapp"></i>
-                        <span>Copy Filtered Numbers</span>
+                        <span>Copy Numbers</span>
                     </button>
 
                     <button onclick="loadCandidateDesk()" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 shadow-sm cursor-pointer">
@@ -118,8 +119,8 @@
                                 <th class="p-4 pl-6">Candidate Name</th>
                                 <th class="p-4">Mail ID</th>
                                 <th class="p-4">WhatsApp Number</th>
-                                <th class="p-4">Current Plan</th>
-                                <th class="p-4">Registered Date</th>
+                                <th class="p-4">Plan Status</th>
+                                <th class="p-4">Form Verification</th>
                                 <th class="p-4 pr-6 text-right">Access Action</th>
                             </tr>
                         </thead>
@@ -150,10 +151,10 @@
             browserLocalPersistence
         } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
-        // Authorized admin list (add any emails you want to grant admin access)
         const ADMIN_EMAILS = [
             "tntet2025@gmail.com",
-            "jeyaselvan76@gmail.com"
+            "jeyaselvan76@gmail.com",
+            "jeyaselvan.edc@gmail.com"
         ];
 
         const firebaseConfig = {
@@ -178,6 +179,7 @@
 
         window.db = db;
         window.allCandidates = [];
+        window.formEmails = new Set();
 
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth <= 768;
 
@@ -244,22 +246,76 @@
             }
         });
 
-        window.loadCandidateDesk = async () => {
-            const tbody = document.getElementById("table-body");
-            tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-400 font-medium"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Loading candidate database...</td></tr>`;
+        // 1. Fetch Form Response Sheet (Col C: Registered Google Account Email)
+        async function fetchResponseSheetEmails() {
+            const SHEET_ID = "1Juvl9IbQUE8QSib6icD_8v4c36omfqCDDxn3v9Xn95Y";
+            const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Form%20Responses%201`;
 
             try {
+                const res = await fetch(SHEET_CSV_URL);
+                const csvText = await res.text();
+                const lines = csvText.split(/\r?\n/);
+                const emailSet = new Set();
+
+                for (let i = 1; i < lines.length; i++) {
+                    const row = parseCSVRow(lines[i]);
+                    // Column C is index 2
+                    if (row && row[2]) {
+                        const email = row[2].replace(/"/g, '').trim().toLowerCase();
+                        if (email && email.includes('@')) {
+                            emailSet.add(email);
+                        }
+                    }
+                }
+                window.formEmails = emailSet;
+            } catch (e) {
+                console.error("Failed to load response sheet:", e);
+            }
+        }
+
+        // CSV parsing helper to handle quoted values correctly
+        function parseCSVRow(rowText) {
+            const result = [];
+            let insideQuotes = false;
+            let current = '';
+            for (let i = 0; i < rowText.length; i++) {
+                const char = rowText[i];
+                if (char === '"') {
+                    insideQuotes = !insideQuotes;
+                } else if (char === ',' && !insideQuotes) {
+                    result.push(current);
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            result.push(current);
+            return result;
+        }
+
+        // 2. Load Firestore Users & Cross-Match
+        window.loadCandidateDesk = async () => {
+            const tbody = document.getElementById("table-body");
+            tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-400 font-medium"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Syncing with Response Sheet and Firestore...</td></tr>`;
+
+            try {
+                // Fetch response sheet emails and Firestore users in parallel
+                await fetchResponseSheetEmails();
                 const snap = await getDocs(collection(db, "users"));
                 const candidates = [];
 
                 snap.forEach(docSnap => {
                     const data = docSnap.data();
+                    const email = (data.email || "").trim().toLowerCase();
+                    const isMatched = window.formEmails.has(email);
+
                     candidates.push({
                         uid: docSnap.id,
-                        name: data.displayName || "Candidate",
+                        name: data.displayName || data.name || "Candidate",
                         email: data.email || "No Email",
-                        mobile: data.mobile || "-",
+                        mobile: data.mobile || data.phoneNumber || "-",
                         isPaid: data.isPaid === true,
+                        isMatchedInSheet: isMatched,
                         createdAt: data.createdAt ? (data.createdAt.toDate ? data.createdAt.toDate().toLocaleDateString() : "-") : "-"
                     });
                 });
@@ -277,11 +333,12 @@
             const total = candidates.length;
             const pro = candidates.filter(c => c.isPaid).length;
             const free = total - pro;
+            const matches = candidates.filter(c => c.isMatchedInSheet).length;
 
             document.getElementById("stat-total").innerText = total;
             document.getElementById("stat-free").innerText = free;
             document.getElementById("stat-pro").innerText = pro;
-            document.getElementById("stat-revenue").innerText = `₹${(pro * 995).toLocaleString('en-IN')}`;
+            document.getElementById("stat-matches").innerText = matches;
         }
 
         window.toggleUserPlan = async (uid, currentStatus) => {
@@ -315,7 +372,8 @@
                                       c.mobile.includes(search);
                 const matchesPlan = (planFilter === "ALL") || 
                                     (planFilter === "PRO" && c.isPaid) || 
-                                    (planFilter === "FREE" && !c.isPaid);
+                                    (planFilter === "FREE" && !c.isPaid) ||
+                                    (planFilter === "MATCH" && c.isMatchedInSheet);
                 return matchesSearch && matchesPlan;
             });
 
@@ -324,24 +382,37 @@
                 return;
             }
 
-            tbody.innerHTML = filtered.map(c => `
-                <tr class="hover:bg-slate-50/80 transition">
-                    <td class="p-4 pl-6 font-bold text-slate-900">${c.name}</td>
-                    <td class="p-4 font-mono text-slate-600 text-xs">${c.email}</td>
-                    <td class="p-4 font-mono font-bold text-slate-700">${c.mobile}</td>
-                    <td class="p-4">
-                        <span class="text-[9px] font-black uppercase px-2 py-0.5 rounded ${c.isPaid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}">
-                            ${c.isPaid ? 'PRO' : 'FREE'}
-                        </span>
-                    </td>
-                    <td class="p-4 text-slate-400 text-xs">${c.createdAt}</td>
-                    <td class="p-4 pr-6 text-right">
-                        <button onclick="toggleUserPlan('${c.uid}', ${c.isPaid})" class="px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${c.isPaid ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'}">
-                            ${c.isPaid ? 'Revoke PRO' : 'Activate PRO'}
-                        </button>
-                    </td>
-                </tr>
-            `).join('');
+            tbody.innerHTML = filtered.map(c => {
+                // Badge for Form Verification
+                const verificationBadge = c.isMatchedInSheet
+                    ? `<span class="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-1 rounded-md">
+                         <i class="fa-solid fa-circle-check text-emerald-600"></i> Match Found
+                       </span>`
+                    : `<span class="inline-flex items-center gap-1 bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-0.5 rounded-md">
+                         No Match
+                       </span>`;
+
+                return `
+                    <tr class="hover:bg-slate-50/80 transition">
+                        <td class="p-4 pl-6 font-bold text-slate-900">${c.name}</td>
+                        <td class="p-4 font-mono text-slate-600 text-xs">${c.email}</td>
+                        <td class="p-4 font-mono font-bold text-slate-700">${c.mobile}</td>
+                        <td class="p-4">
+                            <span class="text-[9px] font-black uppercase px-2 py-0.5 rounded ${c.isPaid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}">
+                                ${c.isPaid ? 'PRO' : 'FREE'}
+                            </span>
+                        </td>
+                        <td class="p-4">
+                            ${verificationBadge}
+                        </td>
+                        <td class="p-4 pr-6 text-right">
+                            <button onclick="toggleUserPlan('${c.uid}', ${c.isPaid})" class="px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer shadow-sm ${c.isPaid ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200' : (c.isMatchedInSheet ? 'bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold ring-2 ring-emerald-400' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100')}">
+                                ${c.isPaid ? 'Revoke PRO' : (c.isMatchedInSheet ? '⭐ Activate PRO' : 'Activate PRO')}
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
         }
 
         function copyAllVisibleWhatsApp() {
@@ -355,7 +426,8 @@
                                           c.mobile.includes(search);
                     const matchesPlan = (planFilter === "ALL") || 
                                         (planFilter === "PRO" && c.isPaid) || 
-                                        (planFilter === "FREE" && !c.isPaid);
+                                        (planFilter === "FREE" && !c.isPaid) ||
+                                        (planFilter === "MATCH" && c.isMatchedInSheet);
                     return matchesSearch && matchesPlan && c.mobile && c.mobile !== "-";
                 })
                 .map(c => c.mobile.replace(/\D/g, ''))
