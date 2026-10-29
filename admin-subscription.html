@@ -23,7 +23,7 @@
                     <i class="fa-solid fa-shield-halved"></i> Multi-Admin Portal
                 </div>
                 <h1 class="text-2xl font-black text-slate-900 tracking-tight">TNTET Student &amp; Subscription Desk</h1>
-                <p class="text-xs text-slate-500 mt-0.5">Manage candidates, verify against G-Form responses, and activate PRO accounts.</p>
+                <p class="text-xs text-slate-500 mt-0.5">Manage candidates, verify against G-Form payment records, and activate PRO access.</p>
             </div>
 
             <!-- Admin Authentication Display -->
@@ -71,11 +71,11 @@
                     <p id="stat-free" class="text-2xl font-black text-amber-600 mt-1">0</p>
                 </div>
                 <div class="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm border-l-4 border-l-emerald-500">
-                    <span class="text-[10px] font-black uppercase tracking-wider text-emerald-600">PRO Members (₹995)</span>
+                    <span class="text-[10px] font-black uppercase tracking-wider text-emerald-600">PRO Members (Active)</span>
                     <p id="stat-pro" class="text-2xl font-black text-emerald-600 mt-1">0</p>
                 </div>
                 <div class="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-sm border-l-4 border-l-indigo-500">
-                    <span class="text-[10px] font-black uppercase tracking-wider text-indigo-600">G-Form Matches</span>
+                    <span class="text-[10px] font-black uppercase tracking-wider text-indigo-600">Paid Match (Col J = YES)</span>
                     <p id="stat-matches" class="text-2xl font-black text-indigo-700 mt-1">0</p>
                 </div>
             </div>
@@ -94,7 +94,8 @@
                             <option value="ALL" selected>All Candidates</option>
                             <option value="PRO">PRO Members Only</option>
                             <option value="FREE">Free / Pending Only</option>
-                            <option value="MATCH">Form Match Only</option>
+                            <option value="VERIFIED_MATCH">Verified Paid Matches (YES)</option>
+                            <option value="READY_TO_ACTIVATE">Ready to Activate (Matched &amp; Free)</option>
                         </select>
                     </div>
 
@@ -119,8 +120,8 @@
                                 <th class="p-4 pl-6">Candidate Name</th>
                                 <th class="p-4">Mail ID</th>
                                 <th class="p-4">WhatsApp Number</th>
-                                <th class="p-4">Plan Status</th>
-                                <th class="p-4">Form Verification</th>
+                                <th class="p-4">Current Plan</th>
+                                <th class="p-4">G-Sheet Verification</th>
                                 <th class="p-4 pr-6 text-right">Access Action</th>
                             </tr>
                         </thead>
@@ -179,7 +180,8 @@
 
         window.db = db;
         window.allCandidates = [];
-        window.formEmails = new Set();
+        window.verifiedPaidEmails = new Set();
+        window.unverifiedEmails = new Set();
 
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth <= 768;
 
@@ -246,8 +248,8 @@
             }
         });
 
-        // 1. Fetch Form Response Sheet (Col C: Registered Google Account Email)
-        async function fetchResponseSheetEmails() {
+        // 1. Fetch Form Response Sheet (Col C: Registered Email, Col J: Amount Verified)
+        async function fetchResponseSheetVerification() {
             const SHEET_ID = "1Juvl9IbQUE8QSib6icD_8v4c36omfqCDDxn3v9Xn95Y";
             const SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Form%20Responses%201`;
 
@@ -255,25 +257,35 @@
                 const res = await fetch(SHEET_CSV_URL);
                 const csvText = await res.text();
                 const lines = csvText.split(/\r?\n/);
-                const emailSet = new Set();
+
+                const paidSet = new Set();
+                const unverifiedSet = new Set();
 
                 for (let i = 1; i < lines.length; i++) {
                     const row = parseCSVRow(lines[i]);
-                    // Column C is index 2
+                    // Col C is index 2 (Registered Google Account Email)
+                    // Col J is index 9 (AMOUNT VERIFIED)
                     if (row && row[2]) {
                         const email = row[2].replace(/"/g, '').trim().toLowerCase();
+                        const amountVerified = (row[9] || "").replace(/"/g, '').trim().toUpperCase();
+
                         if (email && email.includes('@')) {
-                            emailSet.add(email);
+                            if (amountVerified === "YES") {
+                                paidSet.add(email);
+                            } else {
+                                unverifiedSet.add(email);
+                            }
                         }
                     }
                 }
-                window.formEmails = emailSet;
+                window.verifiedPaidEmails = paidSet;
+                window.unverifiedEmails = unverifiedSet;
             } catch (e) {
-                console.error("Failed to load response sheet:", e);
+                console.error("Failed to load response sheet verification:", e);
             }
         }
 
-        // CSV parsing helper to handle quoted values correctly
+        // CSV Parser supporting quotes and commas
         function parseCSVRow(rowText) {
             const result = [];
             let insideQuotes = false;
@@ -296,18 +308,21 @@
         // 2. Load Firestore Users & Cross-Match
         window.loadCandidateDesk = async () => {
             const tbody = document.getElementById("table-body");
-            tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-400 font-medium"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Syncing with Response Sheet and Firestore...</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-400 font-medium"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Verifying candidates with Response Sheet Col C &amp; Col J...</td></tr>`;
 
             try {
-                // Fetch response sheet emails and Firestore users in parallel
-                await fetchResponseSheetEmails();
+                await fetchResponseSheetVerification();
                 const snap = await getDocs(collection(db, "users"));
                 const candidates = [];
 
                 snap.forEach(docSnap => {
                     const data = docSnap.data();
                     const email = (data.email || "").trim().toLowerCase();
-                    const isMatched = window.formEmails.has(email);
+
+                    // Check conditions:
+                    // Match found: email matches AND Col J is YES
+                    const isPaidVerifiedMatch = window.verifiedPaidEmails.has(email);
+                    const isFormMatchUnverified = !isPaidVerifiedMatch && window.unverifiedEmails.has(email);
 
                     candidates.push({
                         uid: docSnap.id,
@@ -315,7 +330,8 @@
                         email: data.email || "No Email",
                         mobile: data.mobile || data.phoneNumber || "-",
                         isPaid: data.isPaid === true,
-                        isMatchedInSheet: isMatched,
+                        isPaidVerifiedMatch: isPaidVerifiedMatch,
+                        isFormMatchUnverified: isFormMatchUnverified,
                         createdAt: data.createdAt ? (data.createdAt.toDate ? data.createdAt.toDate().toLocaleDateString() : "-") : "-"
                     });
                 });
@@ -333,12 +349,12 @@
             const total = candidates.length;
             const pro = candidates.filter(c => c.isPaid).length;
             const free = total - pro;
-            const matches = candidates.filter(c => c.isMatchedInSheet).length;
+            const verifiedMatches = candidates.filter(c => c.isPaidVerifiedMatch).length;
 
             document.getElementById("stat-total").innerText = total;
             document.getElementById("stat-free").innerText = free;
             document.getElementById("stat-pro").innerText = pro;
-            document.getElementById("stat-matches").innerText = matches;
+            document.getElementById("stat-matches").innerText = verifiedMatches;
         }
 
         window.toggleUserPlan = async (uid, currentStatus) => {
@@ -370,10 +386,13 @@
                 const matchesSearch = c.name.toLowerCase().includes(search) || 
                                       c.email.toLowerCase().includes(search) || 
                                       c.mobile.includes(search);
-                const matchesPlan = (planFilter === "ALL") || 
-                                    (planFilter === "PRO" && c.isPaid) || 
-                                    (planFilter === "FREE" && !c.isPaid) ||
-                                    (planFilter === "MATCH" && c.isMatchedInSheet);
+
+                let matchesPlan = true;
+                if (planFilter === "PRO") matchesPlan = c.isPaid;
+                else if (planFilter === "FREE") matchesPlan = !c.isPaid;
+                else if (planFilter === "VERIFIED_MATCH") matchesPlan = c.isPaidVerifiedMatch;
+                else if (planFilter === "READY_TO_ACTIVATE") matchesPlan = c.isPaidVerifiedMatch && !c.isPaid;
+
                 return matchesSearch && matchesPlan;
             });
 
@@ -383,17 +402,48 @@
             }
 
             tbody.innerHTML = filtered.map(c => {
-                // Badge for Form Verification
-                const verificationBadge = c.isMatchedInSheet
-                    ? `<span class="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-1 rounded-md">
-                         <i class="fa-solid fa-circle-check text-emerald-600"></i> Match Found
-                       </span>`
-                    : `<span class="inline-flex items-center gap-1 bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-0.5 rounded-md">
-                         No Match
-                       </span>`;
+                // Determine Badge according to 1. Email match and 2. Col J is YES
+                let verificationBadge = "";
+                if (c.isPaidVerifiedMatch) {
+                    verificationBadge = `
+                        <span class="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-800 text-[10px] font-black px-2.5 py-1 rounded-md">
+                            <i class="fa-solid fa-circle-check text-emerald-600"></i> Match Found (YES)
+                        </span>`;
+                } else if (c.isFormMatchUnverified) {
+                    verificationBadge = `
+                        <span class="inline-flex items-center gap-1.5 bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-md" title="Form submitted, but Col J is not marked YES">
+                            <i class="fa-solid fa-triangle-exclamation text-amber-600"></i> Amount Unverified
+                        </span>`;
+                } else {
+                    verificationBadge = `
+                        <span class="inline-flex items-center gap-1 bg-slate-100 text-slate-400 text-[10px] font-bold px-2 py-0.5 rounded-md">
+                            No Form Match
+                        </span>`;
+                }
+
+                // Action Button styling: Highlight candidates with Verified Match who are still FREE
+                const isReadyToActivate = c.isPaidVerifiedMatch && !c.isPaid;
+
+                let actionButton = "";
+                if (c.isPaid) {
+                    actionButton = `
+                        <button onclick="toggleUserPlan('${c.uid}', ${c.isPaid})" class="px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer bg-red-50 text-red-600 hover:bg-red-100 border border-red-200">
+                            Revoke PRO
+                        </button>`;
+                } else if (isReadyToActivate) {
+                    actionButton = `
+                        <button onclick="toggleUserPlan('${c.uid}', ${c.isPaid})" class="px-3 py-1.5 rounded-lg text-xs font-black transition cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm ring-2 ring-emerald-400 animate-pulse">
+                            ⭐ Activate PRO
+                        </button>`;
+                } else {
+                    actionButton = `
+                        <button onclick="toggleUserPlan('${c.uid}', ${c.isPaid})" class="px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer bg-emerald-50 text-emerald-700 hover:bg-emerald-100">
+                            Activate PRO
+                        </button>`;
+                }
 
                 return `
-                    <tr class="hover:bg-slate-50/80 transition">
+                    <tr class="hover:bg-slate-50/80 transition ${isReadyToActivate ? 'bg-emerald-50/20' : ''}">
                         <td class="p-4 pl-6 font-bold text-slate-900">${c.name}</td>
                         <td class="p-4 font-mono text-slate-600 text-xs">${c.email}</td>
                         <td class="p-4 font-mono font-bold text-slate-700">${c.mobile}</td>
@@ -406,9 +456,7 @@
                             ${verificationBadge}
                         </td>
                         <td class="p-4 pr-6 text-right">
-                            <button onclick="toggleUserPlan('${c.uid}', ${c.isPaid})" class="px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer shadow-sm ${c.isPaid ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200' : (c.isMatchedInSheet ? 'bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold ring-2 ring-emerald-400' : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100')}">
-                                ${c.isPaid ? 'Revoke PRO' : (c.isMatchedInSheet ? '⭐ Activate PRO' : 'Activate PRO')}
-                            </button>
+                            ${actionButton}
                         </td>
                     </tr>
                 `;
@@ -424,10 +472,13 @@
                     const matchesSearch = c.name.toLowerCase().includes(search) || 
                                           c.email.toLowerCase().includes(search) || 
                                           c.mobile.includes(search);
-                    const matchesPlan = (planFilter === "ALL") || 
-                                        (planFilter === "PRO" && c.isPaid) || 
-                                        (planFilter === "FREE" && !c.isPaid) ||
-                                        (planFilter === "MATCH" && c.isMatchedInSheet);
+
+                    let matchesPlan = true;
+                    if (planFilter === "PRO") matchesPlan = c.isPaid;
+                    else if (planFilter === "FREE") matchesPlan = !c.isPaid;
+                    else if (planFilter === "VERIFIED_MATCH") matchesPlan = c.isPaidVerifiedMatch;
+                    else if (planFilter === "READY_TO_ACTIVATE") matchesPlan = c.isPaidVerifiedMatch && !c.isPaid;
+
                     return matchesSearch && matchesPlan && c.mobile && c.mobile !== "-";
                 })
                 .map(c => c.mobile.replace(/\D/g, ''))
