@@ -25,11 +25,17 @@
                 </h1>
                 <p id="date-range-label" class="text-[10px] font-bold text-cyan-300 uppercase tracking-widest mt-1">Loading database...</p>
             </div>
-            <div class="flex gap-3">
-                <button onclick="downloadExcel()" class="bg-green-500 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-green-600 transition shadow flex items-center gap-2 text-xs uppercase tracking-wider">
+            <div class="flex flex-wrap gap-2.5 items-center">
+                <!-- Direct Sheet Sync Trigger for TNTET Tab -->
+                <button id="btn-sync-scores" onclick="syncScoresToSheet()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold transition shadow flex items-center gap-2 text-xs uppercase tracking-wider cursor-pointer">
+                    <i class="fa-solid fa-cloud-arrow-up"></i>
+                    <span>Sync Scores to Sheet</span>
+                </button>
+
+                <button onclick="downloadExcel()" class="bg-green-500 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-green-600 transition shadow flex items-center gap-2 text-xs uppercase tracking-wider">
                     <i class="fa-solid fa-file-excel"></i> Export Excel
                 </button>
-                <button onclick="resetAndFetch()" class="bg-cyan-400 text-[#1e3a8a] px-6 py-2.5 rounded-xl font-black hover:bg-white transition shadow text-xs uppercase tracking-wider">
+                <button onclick="resetAndFetch()" class="bg-cyan-400 text-[#1e3a8a] px-5 py-2.5 rounded-xl font-black hover:bg-white transition shadow text-xs uppercase tracking-wider">
                     <i class="fa-solid fa-rotate"></i> Refresh
                 </button>
             </div>
@@ -38,7 +44,7 @@
 
     <!-- MAIN CONTROL CENTER -->
     <main class="flex-grow max-w-7xl w-full mx-auto p-6 space-y-6">
-        
+
         <!-- AUDIENCE SELECTION SWITCHER -->
         <div class="flex flex-col sm:flex-row bg-white p-1.5 rounded-2xl shadow-sm border border-slate-200/60 gap-2">
             <button onclick="switchAdminTab('tntet')" id="tab-tntet" class="flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-[#1e3a8a] text-white">
@@ -85,7 +91,7 @@
                 <input type="text" id="filterDist" oninput="applyFilters()" placeholder="Search District..." class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-medium text-sm">
             </div>
             <div>
-                <label class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Search Name / Mobile</label>
+                <label id="filterNameLabel" class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Search Name / Mobile</label>
                 <input type="text" id="filterName" oninput="applyFilters()" placeholder="Search Name or Phone..." class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-medium text-sm">
             </div>
         </div>
@@ -95,14 +101,12 @@
             <div class="overflow-x-auto custom-scrollbar">
                 <table id="resultsTable" class="w-full text-left border-collapse">
                     <thead class="bg-slate-50 border-b border-slate-200">
-                        <tr id="tableHeaderRow">
-                            <!-- Populated Dynamically via Script Loop Blocks -->
-                        </tr>
+                        <tr id="tableHeaderRow"></tr>
                     </thead>
                     <tbody id="resultsTableBody" class="divide-y divide-slate-100"></tbody>
                 </table>
             </div>
-            
+
             <!-- WINDOWING TIMELINE CHUNK LOADER -->
             <div class="p-6 bg-slate-50 border-t border-slate-100 flex flex-col items-center gap-3">
                 <div id="loadingState" class="text-slate-400 font-bold text-xs uppercase tracking-wider hidden">
@@ -120,6 +124,9 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getFirestore, collection, getDocs, query, orderBy, where, Timestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
+        // Apps Script Web App Deployment URL
+        const APPS_SCRIPT_SYNC_URL = "https://script.google.com/macros/s/AKfycbwoIgRV1G4_dhvlXhx0NDEHqxKzNAEFQ9u9j7dy6MZqtxTK-1HBwV19WBDtTtIc43ja/exec";
+
         const firebaseConfig = {
             apiKey: "AIzaSyBW92t7GWAf6vIHdJ83n7Nz7Io3y2GArVw",
             authDomain: "tnclassroom-mcq-new.firebaseapp.com",
@@ -133,21 +140,20 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        let adminExamScope = "tntet"; // active collection tracker: tntet / nmms / feedback
-        let allResults = []; 
-        let currentWindowEnd = new Date(); 
+        let adminExamScope = "tntet";
+        let allResults = [];
+        let currentWindowEnd = new Date();
         const WINDOW_SIZE_DAYS = 2;
 
         window.switchAdminTab = (targetScope) => {
             adminExamScope = targetScope;
-            
+
             const tntetBtn = document.getElementById('tab-tntet');
             const nmmsBtn = document.getElementById('tab-nmms');
             const feedbackBtn = document.getElementById('tab-feedback');
-
             const loadMoreBtn = document.getElementById('loadMoreBtn');
-            
-            // Normalize layout targets state classes
+            const syncScoresBtn = document.getElementById('btn-sync-scores');
+
             tntetBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
             nmmsBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
             feedbackBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
@@ -164,16 +170,19 @@
             filterQuizLabel.innerText = "Filter by Quiz ID";
             filterDistLabel.innerText = "Filter by District";
 
-            if(targetScope === 'tntet') {
+            if (targetScope === 'tntet') {
                 tntetBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-[#1e3a8a] text-white";
                 loadMoreBtn.className = "bg-white border-2 border-[#1e3a8a] text-[#1e3a8a] px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-[#1e3a8a] hover:text-white transition-all shadow-sm";
-            } else if(targetScope === 'nmms') {
+                syncScoresBtn.classList.remove('hidden');
+            } else if (targetScope === 'nmms') {
                 nmmsBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-emerald-600 text-white";
                 loadMoreBtn.className = "bg-white border-2 border-emerald-600 text-emerald-600 px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-emerald-600 hover:text-white transition-all shadow-sm";
+                syncScoresBtn.classList.add('hidden');
             } else {
                 feedbackBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-purple-700 text-white";
                 loadMoreBtn.className = "bg-white border-2 border-purple-700 text-purple-700 px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-purple-700 hover:text-white transition-all shadow-sm";
-                
+                syncScoresBtn.classList.add('hidden');
+
                 filterQuizLabel.innerText = "Filter by Feedback ID";
                 filterDistLabel.innerText = "Filter by Email Address";
             }
@@ -191,11 +200,7 @@
 
         function updateDateMetrics(data) {
             const now = new Date();
-
-            // Midnight today (00:00:00)
             const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-            // Midnight yesterday (00:00:00)
             const yesterdayStart = new Date(todayStart);
             yesterdayStart.setDate(yesterdayStart.getDate() - 1);
 
@@ -261,7 +266,7 @@
                 currentWindowEnd = windowStart;
 
                 updateDateMetrics(allResults);
-                applyFilters(); 
+                applyFilters();
             } catch (error) {
                 console.error(error);
                 alert("Firestore Stream Error. Verify security rules or database connection tracks.");
@@ -340,7 +345,7 @@
                     const date = item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : "—";
                     const displayDistrict = item.district || item.dist || "—";
                     const badgeStyle = adminExamScope === 'nmms' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-700';
-                    
+
                     const row = `
                         <tr class="hover:bg-slate-50 transition">
                             <td class="p-4 text-[10px] text-slate-400 font-mono font-bold whitespace-nowrap">${date}</td>
@@ -398,6 +403,60 @@
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, `${adminExamScope.toUpperCase()}_Export`);
             XLSX.writeFile(wb, `${adminExamScope}_results_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        };
+
+        // TNTET Results Score Sync Function
+        window.syncScoresToSheet = async () => {
+            if (allResults.length === 0) {
+                alert("No submissions currently loaded. Click 'Refresh' or 'Load Previous 2 Days' first.");
+                return;
+            }
+
+            const validSubmissions = allResults.filter(item => item.quizId && (item.mobile || item.mobileNumber));
+            if (validSubmissions.length === 0) {
+                alert("No valid quiz submissions with phone numbers found in the current window.");
+                return;
+            }
+
+            if (!confirm(`Ready to sync ${validSubmissions.length} TNTET quiz results to the Google Sheet. Continue?`)) {
+                return;
+            }
+
+            const syncBtn = document.getElementById('btn-sync-scores');
+            const originalHtml = syncBtn.innerHTML;
+            syncBtn.disabled = true;
+            syncBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> <span>Syncing to Sheet...</span>`;
+
+            const payload = validSubmissions.map(item => ({
+                quizId: item.quizId.trim(),
+                mobile: item.mobile || item.mobileNumber,
+                score: item.score ?? 0
+            }));
+
+            try {
+                const response = await fetch(APPS_SCRIPT_SYNC_URL, {
+                    method: "POST",
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json();
+
+                if (result.status === "success") {
+                    let msg = `Scores synced successfully!\n• Updated entries: ${result.updated}\n• Unmatched or skipped: ${result.unmatched}`;
+                    if (result.missingTabs && result.missingTabs.length > 0) {
+                        msg += `\n• Missing quiz tabs: ${result.missingTabs.join(', ')}`;
+                    }
+                    alert(msg);
+                } else {
+                    alert("Apps Script error: " + (result.message || "Unknown error"));
+                }
+            } catch (err) {
+                console.error("Sync error:", err);
+                alert("Failed to connect to Google Apps Script. Check network status and deployment access.");
+            } finally {
+                syncBtn.disabled = false;
+                syncBtn.innerHTML = originalHtml;
+            }
         };
 
         // Initial fetch on load
