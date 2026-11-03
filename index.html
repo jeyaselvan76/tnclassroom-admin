@@ -53,8 +53,11 @@
             <button onclick="switchAdminTab('nmms')" id="tab-nmms" class="flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100">
                 <i class="fa-solid fa-children mr-1.5"></i> NMMS Submissions
             </button>
+            <button onclick="switchAdminTab('support')" id="tab-support" class="flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100">
+                <i class="fa-solid fa-headset mr-1.5"></i> Support (TNTET)
+            </button>
             <button onclick="switchAdminTab('feedback')" id="tab-feedback" class="flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100">
-                <i class="fa-solid fa-comments mr-1.5"></i> User Feedback Portal
+                <i class="fa-solid fa-comments mr-1.5"></i> User Feedback
             </button>
         </div>
 
@@ -122,7 +125,7 @@
     <!-- MODULE INITS -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, collection, getDocs, query, orderBy, where, Timestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, collection, getDocs, doc, updateDoc, query, orderBy, where, Timestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         // Apps Script Web App Deployment URL
         const APPS_SCRIPT_SYNC_URL = "https://script.google.com/macros/s/AKfycbwoIgRV1G4_dhvlXhx0NDEHqxKzNAEFQ9u9j7dy6MZqtxTK-1HBwV19WBDtTtIc43ja/exec";
@@ -150,12 +153,14 @@
 
             const tntetBtn = document.getElementById('tab-tntet');
             const nmmsBtn = document.getElementById('tab-nmms');
+            const supportBtn = document.getElementById('tab-support');
             const feedbackBtn = document.getElementById('tab-feedback');
             const loadMoreBtn = document.getElementById('loadMoreBtn');
             const syncScoresBtn = document.getElementById('btn-sync-scores');
 
             tntetBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
             nmmsBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
+            supportBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
             feedbackBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-slate-50 text-slate-600 hover:bg-slate-100";
 
             const filterQuizInput = document.getElementById('filterQuiz');
@@ -178,6 +183,13 @@
                 nmmsBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-emerald-600 text-white";
                 loadMoreBtn.className = "bg-white border-2 border-emerald-600 text-emerald-600 px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-emerald-600 hover:text-white transition-all shadow-sm";
                 syncScoresBtn.classList.add('hidden');
+            } else if (targetScope === 'support') {
+                supportBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-amber-600 text-white";
+                loadMoreBtn.className = "bg-white border-2 border-amber-600 text-amber-600 px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-amber-600 hover:text-white transition-all shadow-sm";
+                syncScoresBtn.classList.add('hidden');
+
+                filterQuizLabel.innerText = "Filter by Category";
+                filterDistLabel.innerText = "Filter by Status (OPEN/CLOSED)";
             } else {
                 feedbackBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-purple-700 text-white";
                 loadMoreBtn.className = "bg-white border-2 border-purple-700 text-purple-700 px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-purple-700 hover:text-white transition-all shadow-sm";
@@ -208,7 +220,10 @@
             let yesterdayCount = 0;
 
             data.forEach(item => {
-                const rawTs = adminExamScope === 'feedback' ? item.submittedAt : item.timestamp;
+                let rawTs = item.timestamp;
+                if (adminExamScope === 'feedback') rawTs = item.submittedAt;
+                if (adminExamScope === 'support') rawTs = item.createdAt;
+
                 if (!rawTs) return;
 
                 const recordDate = rawTs.toDate ? rawTs.toDate() : new Date(rawTs);
@@ -238,9 +253,16 @@
 
             label.innerText = `Workspace Scope [${adminExamScope.toUpperCase()}]: ${windowStart.toLocaleDateString()} to ${currentWindowEnd.toLocaleDateString()}`;
 
-            const isFeedbackScope = adminExamScope === 'feedback';
-            const collectionTarget = isFeedbackScope ? "feedback" : "results";
-            const orderTimestampField = isFeedbackScope ? "submittedAt" : "timestamp";
+            let collectionTarget = "results";
+            let orderTimestampField = "timestamp";
+
+            if (adminExamScope === 'feedback') {
+                collectionTarget = "feedback";
+                orderTimestampField = "submittedAt";
+            } else if (adminExamScope === 'support') {
+                collectionTarget = "support_tickets";
+                orderTimestampField = "createdAt";
+            }
 
             try {
                 const resultsRef = collection(db, collectionTarget);
@@ -252,14 +274,15 @@
                 );
 
                 const querySnapshot = await getDocs(q);
-                let newData = querySnapshot.docs.map(doc => doc.data());
+                let newData = querySnapshot.docs.map(doc => ({
+                    docId: doc.id,
+                    ...doc.data()
+                }));
 
-                if (!isFeedbackScope) {
-                    if (adminExamScope === 'tntet') {
-                        newData = newData.filter(item => (item.quizId || "").toLowerCase().includes('tet') || item.examType === 'tntet');
-                    } else {
-                        newData = newData.filter(item => (item.quizId || "").toLowerCase().includes('nmms') || item.examType === 'nmms');
-                    }
+                if (adminExamScope === 'tntet') {
+                    newData = newData.filter(item => (item.quizId || "").toLowerCase().includes('tet') || item.examType === 'tntet');
+                } else if (adminExamScope === 'nmms') {
+                    newData = newData.filter(item => (item.quizId || "").toLowerCase().includes('nmms') || item.examType === 'nmms');
                 }
 
                 allResults = [...allResults, ...newData];
@@ -287,6 +310,12 @@
                     return (r.feedbackId || "").toLowerCase().includes(qId) &&
                            (r.emailAddress || "").toLowerCase().includes(distInput) &&
                            ((r.name || "").toLowerCase().includes(search) || (r.mobileNumber || "").includes(search));
+                } else if (adminExamScope === 'support') {
+                    const cat = (r.assistanceCategory || "").toLowerCase();
+                    const st = (r.status || "OPEN").toLowerCase();
+                    return cat.includes(qId) &&
+                           st.includes(distInput) &&
+                           ((r.name || "").toLowerCase().includes(search) || (r.mobile || "").includes(search));
                 } else {
                     const districtValue = (r.district || r.dist || "").toLowerCase();
                     return (r.quizId || "").toLowerCase().includes(qId) &&
@@ -297,12 +326,81 @@
             renderTable(filteredData);
         };
 
+        window.closeTicket = async (docId, btnElement) => {
+            if (!confirm("Are you sure you want to mark this support ticket as CLOSED?")) return;
+
+            btnElement.disabled = true;
+            btnElement.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i>`;
+
+            try {
+                const ticketRef = doc(db, "support_tickets", docId);
+                await updateDoc(ticketRef, {
+                    status: "CLOSED",
+                    closedAt: new Date()
+                });
+
+                // Update local dataset
+                const target = allResults.find(item => item.docId === docId);
+                if (target) {
+                    target.status = "CLOSED";
+                }
+                applyFilters();
+            } catch (err) {
+                console.error("Error closing ticket:", err);
+                alert("Could not update status: " + (err.message || err));
+                btnElement.disabled = false;
+                btnElement.innerHTML = `<i class="fa-solid fa-check"></i> Mark Closed`;
+            }
+        };
+
         function renderTable(data) {
             const headerRow = document.getElementById('tableHeaderRow');
             const body = document.getElementById('resultsTableBody');
             body.innerHTML = '';
 
-            if (adminExamScope === 'feedback') {
+            if (adminExamScope === 'support') {
+                headerRow.innerHTML = `
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Timestamp</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Candidate Name</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Mobile</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Assistance Category</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Description</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider text-center">Status</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider text-center">Action</th>
+                `;
+
+                data.forEach(item => {
+                    const date = item.createdAt?.toDate ? item.createdAt.toDate().toLocaleString() : "—";
+                    const isClosed = (item.status || "OPEN").toUpperCase() === "CLOSED";
+                    const statusBadge = isClosed 
+                        ? `<span class="bg-slate-100 text-slate-600 border border-slate-300 text-[10px] px-2.5 py-1 rounded-full font-black uppercase tracking-wider">CLOSED</span>`
+                        : `<span class="bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] px-2.5 py-1 rounded-full font-black uppercase tracking-wider animate-pulse">OPEN</span>`;
+
+                    const actionBtn = isClosed
+                        ? `<span class="text-xs text-slate-400 font-bold italic"><i class="fa-solid fa-check-double text-emerald-500 mr-1"></i>Resolved</span>`
+                        : `<button onclick="closeTicket('${item.docId}', this)" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition shadow flex items-center gap-1.5 mx-auto cursor-pointer">
+                            <i class="fa-solid fa-check"></i> <span>Mark Closed</span>
+                           </button>`;
+
+                    const row = `
+                        <tr class="hover:bg-slate-50 transition">
+                            <td class="p-4 text-[10px] text-slate-400 font-mono font-bold whitespace-nowrap">${date}</td>
+                            <td class="p-4 font-bold text-slate-800">${item.name || '—'}</td>
+                            <td class="p-4 text-xs text-slate-600 font-mono font-medium">${item.mobile || '—'}</td>
+                            <td class="p-4">
+                                <span class="bg-amber-100 text-amber-800 text-[10px] px-2 py-1 rounded-md font-black uppercase tracking-tight">${item.assistanceCategory || 'General'}</span>
+                            </td>
+                            <td class="p-4 text-xs text-slate-700 whitespace-normal feedback-cell leading-relaxed font-medium">
+                                ${item.description || "—"}
+                            </td>
+                            <td class="p-4 text-center whitespace-nowrap">${statusBadge}</td>
+                            <td class="p-4 text-center whitespace-nowrap">${actionBtn}</td>
+                        </tr>
+                    `;
+                    body.insertAdjacentHTML('beforeend', row);
+                });
+
+            } else if (adminExamScope === 'feedback') {
                 headerRow.innerHTML = `
                     <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Submitted At</th>
                     <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">User Name</th>
@@ -377,7 +475,16 @@
 
             let cleanExportData = [];
 
-            if (adminExamScope === 'feedback') {
+            if (adminExamScope === 'support') {
+                cleanExportData = allResults.map(item => ({
+                    "Timestamp": item.createdAt?.toDate ? item.createdAt.toDate().toLocaleString() : "—",
+                    "Candidate Name": item.name || "—",
+                    "Mobile": item.mobile || "—",
+                    "Assistance Category": item.assistanceCategory || "General",
+                    "Description": item.description || "—",
+                    "Status": item.status || "OPEN"
+                }));
+            } else if (adminExamScope === 'feedback') {
                 cleanExportData = allResults.map(item => ({
                     "Submitted At": item.submittedAt?.toDate ? item.submittedAt.toDate().toLocaleString() : "—",
                     "User Name": item.name || "—",
@@ -402,7 +509,7 @@
             const ws = XLSX.utils.json_to_sheet(cleanExportData);
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, `${adminExamScope.toUpperCase()}_Export`);
-            XLSX.writeFile(wb, `${adminExamScope}_results_${new Date().toISOString().slice(0, 10)}.xlsx`);
+            XLSX.writeFile(wb, `${adminExamScope}_records_${new Date().toISOString().slice(0, 10)}.xlsx`);
         };
 
         // TNTET Results Score Sync Function
