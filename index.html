@@ -90,12 +90,12 @@
                 <input type="text" id="filterQuiz" oninput="applyFilters()" placeholder="Search Quiz ID..." class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-medium text-sm">
             </div>
             <div>
-                <label id="filterDistLabel" class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Filter by District</label>
-                <input type="text" id="filterDist" oninput="applyFilters()" placeholder="Search District..." class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-medium text-sm">
+                <label id="filterDistLabel" class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Filter by District / Email</label>
+                <input type="text" id="filterDist" oninput="applyFilters()" placeholder="Search District or Email..." class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-medium text-sm">
             </div>
             <div>
                 <label id="filterNameLabel" class="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-wider">Search Name / Mobile</label>
-                <input type="text" id="filterName" oninput="applyFilters()" placeholder="Search Name or Phone..." class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-medium text-sm">
+                <input type="text" id="filterName" oninput="applyFilters()" placeholder="Search Name, Phone, or Email..." class="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 font-medium text-sm">
             </div>
         </div>
 
@@ -130,6 +130,10 @@
         // Apps Script Web App Deployment URL
         const APPS_SCRIPT_SYNC_URL = "https://script.google.com/macros/s/AKfycbwoIgRV1G4_dhvlXhx0NDEHqxKzNAEFQ9u9j7dy6MZqtxTK-1HBwV19WBDtTtIc43ja/exec";
 
+        // Google Sheet Details for Email -> Mobile Mapping
+        const ADMIN_SHEET_ID = "1Juvl9IbQUE8QSib6icD_8v4c36omfqCDDxn3v9Xn95Y";
+        const ADMIN_TAB_NAME = "tnc_admin";
+
         const firebaseConfig = {
             apiKey: "AIzaSyBW92t7GWAf6vIHdJ83n7Nz7Io3y2GArVw",
             authDomain: "tnclassroom-mcq-new.firebaseapp.com",
@@ -145,8 +149,44 @@
 
         let adminExamScope = "tntet";
         let allResults = [];
+        let emailToMobileMap = {}; // Key: email.toLowerCase(), Value: mobile string
+        let isMapLoaded = false;
         let currentWindowEnd = new Date();
         const WINDOW_SIZE_DAYS = 2;
+
+        /**
+         * Loads Email-to-Mobile mapping from Google Sheets (tnc_admin tab: Col C = Email, Col D = Mobile)
+         */
+        async function loadEmailToMobileMap() {
+            if (isMapLoaded) return;
+            try {
+                const gvizUrl = `https://docs.google.com/spreadsheets/d/${ADMIN_SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(ADMIN_TAB_NAME)}`;
+                const res = await fetch(gvizUrl);
+                const text = await res.text();
+
+                // Strip the Google Visualization wrapper: /*O_o*/ google.visualization.Query.setResponse(...);
+                const jsonString = text.substring(text.indexOf("(") + 1, text.lastIndexOf(")"));
+                const json = JSON.parse(jsonString);
+
+                const rows = json.table?.rows || [];
+                rows.forEach(r => {
+                    const cVals = r.c;
+                    if (!cVals) return;
+                    // Col C is index 2, Col D is index 3
+                    const rawEmail = cVals[2]?.v ? String(cVals[2].v).trim().toLowerCase() : "";
+                    const rawMobile = cVals[3]?.v !== undefined && cVals[3]?.v !== null ? String(cVals[3].v).trim() : "";
+
+                    if (rawEmail && rawMobile) {
+                        emailToMobileMap[rawEmail] = rawMobile;
+                    }
+                });
+
+                isMapLoaded = true;
+                console.log(`Loaded ${Object.keys(emailToMobileMap).length} student email-to-mobile mapping pairs from ${ADMIN_TAB_NAME}.`);
+            } catch (err) {
+                console.warn("Could not load tnc_admin mapping sheet via gviz:", err);
+            }
+        }
 
         window.switchAdminTab = (targetScope) => {
             adminExamScope = targetScope;
@@ -173,16 +213,18 @@
             filterQuizInput.classList.remove('opacity-40');
             filterDistInput.classList.remove('opacity-40');
             filterQuizLabel.innerText = "Filter by Quiz ID";
-            filterDistLabel.innerText = "Filter by District";
+            filterDistLabel.innerText = "Filter by District / Email";
 
             if (targetScope === 'tntet') {
                 tntetBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-[#1e3a8a] text-white";
                 loadMoreBtn.className = "bg-white border-2 border-[#1e3a8a] text-[#1e3a8a] px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-[#1e3a8a] hover:text-white transition-all shadow-sm";
                 syncScoresBtn.classList.remove('hidden');
+                filterDistLabel.innerText = "Filter by Email";
             } else if (targetScope === 'nmms') {
                 nmmsBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-emerald-600 text-white";
                 loadMoreBtn.className = "bg-white border-2 border-emerald-600 text-emerald-600 px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-emerald-600 hover:text-white transition-all shadow-sm";
                 syncScoresBtn.classList.add('hidden');
+                filterDistLabel.innerText = "Filter by District";
             } else if (targetScope === 'support') {
                 supportBtn.className = "flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-wider transition-all bg-amber-600 text-white";
                 loadMoreBtn.className = "bg-white border-2 border-amber-600 text-amber-600 px-8 py-2.5 rounded-xl font-black text-xs uppercase hover:bg-amber-600 hover:text-white transition-all shadow-sm";
@@ -248,6 +290,9 @@
             btn.disabled = true;
             btn.classList.add('opacity-50');
 
+            // Ensure the sheet mapping is loaded
+            await loadEmailToMobileMap();
+
             const windowStart = new Date(currentWindowEnd);
             windowStart.setDate(windowStart.getDate() - WINDOW_SIZE_DAYS);
 
@@ -281,6 +326,24 @@
 
                 if (adminExamScope === 'tntet') {
                     newData = newData.filter(item => (item.quizId || "").toLowerCase().includes('tet') || item.examType === 'tntet');
+
+                    // Match Email to Mobile from tnc_admin mapping sheet
+                    newData = newData.map(item => {
+                        const candidateEmail = (item.email || "").trim().toLowerCase();
+                        let resolvedMobile = item.mobile || item.mobileNumber || "";
+
+                        // If mobile is not present or was stored as placeholder, look up from sheet map
+                        if ((!resolvedMobile || resolvedMobile === "GMAIL_AUTH") && candidateEmail && emailToMobileMap[candidateEmail]) {
+                            resolvedMobile = emailToMobileMap[candidateEmail];
+                        }
+
+                        return {
+                            ...item,
+                            email: candidateEmail || "—",
+                            matchedMobile: resolvedMobile
+                        };
+                    });
+
                 } else if (adminExamScope === 'nmms') {
                     newData = newData.filter(item => (item.quizId || "").toLowerCase().includes('nmms') || item.examType === 'nmms');
                 }
@@ -316,6 +379,12 @@
                     return cat.includes(qId) &&
                            st.includes(distInput) &&
                            ((r.name || "").toLowerCase().includes(search) || (r.mobile || "").includes(search));
+                } else if (adminExamScope === 'tntet') {
+                    const userEmail = (r.email || "").toLowerCase();
+                    const userMobile = (r.matchedMobile || r.mobile || "").toLowerCase();
+                    return (r.quizId || "").toLowerCase().includes(qId) &&
+                           userEmail.includes(distInput) &&
+                           ((r.name || "").toLowerCase().includes(search) || userMobile.includes(search) || userEmail.includes(search));
                 } else {
                     const districtValue = (r.district || r.dist || "").toLowerCase();
                     return (r.quizId || "").toLowerCase().includes(qId) &&
@@ -339,7 +408,6 @@
                     closedAt: new Date()
                 });
 
-                // Update local dataset
                 const target = allResults.find(item => item.docId === docId);
                 if (target) {
                     target.status = "CLOSED";
@@ -372,7 +440,7 @@
                 data.forEach(item => {
                     const date = item.createdAt?.toDate ? item.createdAt.toDate().toLocaleString() : "—";
                     const isClosed = (item.status || "OPEN").toUpperCase() === "CLOSED";
-                    const statusBadge = isClosed 
+                    const statusBadge = isClosed
                         ? `<span class="bg-slate-100 text-slate-600 border border-slate-300 text-[10px] px-2.5 py-1 rounded-full font-black uppercase tracking-wider">CLOSED</span>`
                         : `<span class="bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] px-2.5 py-1 rounded-full font-black uppercase tracking-wider animate-pulse">OPEN</span>`;
 
@@ -428,7 +496,48 @@
                     `;
                     body.insertAdjacentHTML('beforeend', row);
                 });
+
+            } else if (adminExamScope === 'tntet') {
+                // TNTET Submissions: Matches Email with Mobile from Sheet
+                headerRow.innerHTML = `
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Timestamp</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Candidate Name</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Matched Mobile</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Gmail ID</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Quiz ID</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider text-center">Score</th>
+                    <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Feedback</th>
+                `;
+
+                data.forEach(item => {
+                    const date = item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : "—";
+                    const mobileDisplay = item.matchedMobile
+                        ? `<span class="font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">${item.matchedMobile}</span>`
+                        : `<span class="text-xs text-amber-600 italic font-semibold">Not Found in Sheet</span>`;
+
+                    const row = `
+                        <tr class="hover:bg-slate-50 transition">
+                            <td class="p-4 text-[10px] text-slate-400 font-mono font-bold whitespace-nowrap">${date}</td>
+                            <td class="p-4 font-bold text-slate-700">${item.name || '—'}</td>
+                            <td class="p-4 text-xs whitespace-nowrap">${mobileDisplay}</td>
+                            <td class="p-4 text-xs font-medium text-slate-600 font-mono">${item.email || '—'}</td>
+                            <td class="p-4">
+                                <span class="bg-blue-100 text-blue-700 text-[10px] px-2 py-1 rounded-md font-black uppercase tracking-tight font-mono">${item.quizId || 'N/A'}</span>
+                            </td>
+                            <td class="p-4 text-center">
+                                <span class="font-black text-slate-800 text-base">${item.score ?? 0}</span>
+                                <span class="text-[10px] text-slate-400 font-bold">/${item.total || 0}</span>
+                            </td>
+                            <td class="p-4 text-xs text-slate-600 italic whitespace-normal feedback-cell">
+                                ${item.feedback || "—"}
+                            </td>
+                        </tr>
+                    `;
+                    body.insertAdjacentHTML('beforeend', row);
+                });
+
             } else {
+                // NMMS Submissions
                 headerRow.innerHTML = `
                     <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Timestamp</th>
                     <th class="p-4 text-xs font-black uppercase text-slate-500 tracking-wider">Student Name</th>
@@ -442,7 +551,6 @@
                 data.forEach(item => {
                     const date = item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : "—";
                     const displayDistrict = item.district || item.dist || "—";
-                    const badgeStyle = adminExamScope === 'nmms' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-700';
 
                     const row = `
                         <tr class="hover:bg-slate-50 transition">
@@ -451,7 +559,7 @@
                             <td class="p-4 text-xs text-slate-600 font-mono font-medium">${item.mobile || '—'}</td>
                             <td class="p-4 text-sm text-slate-600">${displayDistrict}</td>
                             <td class="p-4">
-                                <span class="${badgeStyle} text-[10px] px-2 py-1 rounded-md font-black uppercase tracking-tight font-mono">${item.quizId || 'N/A'}</span>
+                                <span class="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-1 rounded-md font-black uppercase tracking-tight font-mono">${item.quizId || 'N/A'}</span>
                             </td>
                             <td class="p-4 text-center">
                                 <span class="font-black text-slate-800 text-base">${item.score ?? 0}</span>
@@ -493,6 +601,17 @@
                     "Feedback ID": item.feedbackId || "N/A",
                     "Message Content": item.messageContent || "—"
                 }));
+            } else if (adminExamScope === 'tntet') {
+                cleanExportData = allResults.map(item => ({
+                    "Timestamp": item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : "—",
+                    "Candidate Name": item.name || "—",
+                    "Matched Mobile": item.matchedMobile || "Not Matched",
+                    "Email Address": item.email || "—",
+                    "Quiz ID": item.quizId || "N/A",
+                    "Score": item.score ?? 0,
+                    "Total": item.total || 0,
+                    "Feedback": item.feedback || "—"
+                }));
             } else {
                 cleanExportData = allResults.map(item => ({
                     "Timestamp": item.timestamp?.toDate ? item.timestamp.toDate().toLocaleString() : "—",
@@ -512,20 +631,21 @@
             XLSX.writeFile(wb, `${adminExamScope}_records_${new Date().toISOString().slice(0, 10)}.xlsx`);
         };
 
-        // TNTET Results Score Sync Function
+        // TNTET Results Score Sync Function (Uses Matched Mobile Number)
         window.syncScoresToSheet = async () => {
             if (allResults.length === 0) {
                 alert("No submissions currently loaded. Click 'Refresh' or 'Load Previous 2 Days' first.");
                 return;
             }
 
-            const validSubmissions = allResults.filter(item => item.quizId && (item.mobile || item.mobileNumber));
+            // Must have quizId and either a matched mobile or direct mobile
+            const validSubmissions = allResults.filter(item => item.quizId && (item.matchedMobile || item.mobile || item.mobileNumber));
             if (validSubmissions.length === 0) {
-                alert("No valid quiz submissions with phone numbers found in the current window.");
+                alert("No valid quiz submissions with matched mobile numbers found in current window.");
                 return;
             }
 
-            if (!confirm(`Ready to sync ${validSubmissions.length} TNTET quiz results to the Google Sheet. Continue?`)) {
+            if (!confirm(`Ready to sync ${validSubmissions.length} TNTET quiz results to the Google Sheet using matched mobile numbers. Continue?`)) {
                 return;
             }
 
@@ -536,7 +656,7 @@
 
             const payload = validSubmissions.map(item => ({
                 quizId: item.quizId.trim(),
-                mobile: item.mobile || item.mobileNumber,
+                mobile: item.matchedMobile || item.mobile || item.mobileNumber,
                 score: item.score ?? 0
             }));
 
